@@ -1,0 +1,2 @@
+# LF everywhere: these files are copied to Linux servers, where a CRLF breaks systemd units and shebangs
+* text=auto eol=lf

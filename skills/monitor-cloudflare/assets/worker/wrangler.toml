@@ -1,0 +1,18 @@
+name = "infra-alerts"
+main = "src/index.js"
+compatibility_date = "2025-09-01"
+# Probes of a hostname on your own zone go through Cloudflare like a visitor's request, not straight to the origin.
+# Do not probe a URL that is routed to THIS Worker: it would call itself.
+compatibility_flags = ["global_fetch_strictly_public"]
+workers_dev = true
+
+[triggers]
+crons = ["* * * * *"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "infra-alerts"
+database_id = "REPLACE_WITH_DATABASE_ID" # printed by: npx wrangler d1 create infra-alerts
+
+[observability]
+enabled = true

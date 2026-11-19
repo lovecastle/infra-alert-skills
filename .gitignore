@@ -1,0 +1,10 @@
+# secrets never belong here
+notify.env
+*.env
+.dev.vars
+# local runs
+__pycache__/
+node_modules/
+.wrangler/
+*.log
+state.json

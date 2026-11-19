@@ -1,0 +1,15 @@
+[Unit]
+Description=infrawatch: one monitoring run (alerts to chat on changes)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/infrawatch/infrawatch.py run
+# Runs as root: it reads the journal, /etc/shadow's hash, Docker and nvidia-smi. It writes only its state file.
+StateDirectory=infrawatch
+ProtectSystem=strict
+PrivateTmp=true
+NoNewPrivileges=true
+Nice=10
+TimeoutStartSec=120

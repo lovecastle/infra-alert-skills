@@ -1,0 +1,12 @@
+{
+  "name": "infra-alert-skills",
+  "owner": { "name": "lovecastle", "url": "https://github.com/lovecastle" },
+  "metadata": { "description": "Monitoring and chat alerts for small infrastructure, as agent skills." },
+  "plugins": [
+    {
+      "name": "infra-alerts",
+      "source": "./",
+      "description": "Set up and run monitoring with chat alerts for VPSes, NVIDIA GPU machines and Cloudflare-hosted services: a one-file host agent, a Cloudflare Worker watcher, Telegram and other channels, alert triage."
+    }
+  ]
+}

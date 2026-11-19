@@ -1,0 +1,10 @@
+{
+  "name": "infra-alerts",
+  "version": "0.1.0",
+  "description": "Skills that set up and run small-infrastructure monitoring with chat alerts: Linux hosts and NVIDIA GPUs (one-file agent), an external watcher on Cloudflare Workers, Telegram and other channels, and alert triage.",
+  "author": { "name": "lovecastle", "url": "https://github.com/lovecastle" },
+  "homepage": "https://github.com/lovecastle/infra-alert-skills",
+  "repository": "https://github.com/lovecastle/infra-alert-skills",
+  "license": "MIT",
+  "keywords": ["monitoring", "alerts", "telegram", "cloudflare-workers", "gpu", "nvidia", "vps", "uptime", "devops"]
+}
