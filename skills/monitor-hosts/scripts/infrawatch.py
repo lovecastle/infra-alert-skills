@@ -35,10 +35,14 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 OK, WARN, CRIT = "ok", "warn", "crit"
 RANK = {OK: 0, WARN: 1, CRIT: 2}
 ICON = {OK: "✅", WARN: "🟠", CRIT: "🔴"}
+# What a message asks of whoever reads it. Each message carries one category: its word in the title ([labels], any
+# language) and a tag on its last line, the same everywhere, so a chat can be filtered by it. On Telegram each
+# category can also go to its own topic of a forum group (tg_thread_<category>).
+CATS = {"urgent": "🔴", "attention": "🟠", "security": "🛡", "resolved": "✅", "stats": "📊"}
 
 # A reading of one check (instant: opens and closes on a single reading, for checks that debounce themselves) and a
 # one-shot event (a reboot, an OOM kill, a new SSH login: told once, nothing to recover from).
@@ -50,7 +54,8 @@ DEFAULTS = {
     "notify": {"prefix": "[infrawatch]", "tg_bot_token": "", "tg_chat_id": "", "tg_thread_id": "", "tg_api_host": "",
                "qywx_key": "", "fskey": "", "fssecret": "", "fs_host": "", "dd_bot_token": "", "dd_bot_secret": "",
                "bark_push": "", "ntfy_url": "", "ntfy_topic": "", "ntfy_token": "", "push_key": "",
-               "push_plus_token": "", "webhook_url": ""},
+               "push_plus_token": "", "webhook_url": "", **{"tg_thread_" + c: "" for c in CATS}},
+    "labels": {"urgent": "URGENT", "attention": "ATTENTION", "security": "SECURITY", "resolved": "RESOLVED", "stats": "STATS"},
     "heartbeat": {"url": "", "token": ""},
     "alerting": {"fail_threshold": "3", "ok_threshold": "2", "remind_hours": "4"},
     "thresholds": {"disk_warn": "85", "disk_crit": "95", "inode_warn": "90", "inode_crit": "98", "mem_warn": "90",
@@ -505,8 +510,18 @@ def evaluate(st, readings, now, fail_n=3, ok_n=2, remind_s=4 * 3600):
     return notices
 
 
-def compose(prefix, host, notices, events):
-    """One run's changes → (title, lines, loud). loud: something new is wrong (the rest arrives without sound)."""
+def headline(prefix, cat, host, said, labels=None):
+    return "%s %s %s | %s: %s" % (prefix, CATS[cat], (labels or DEFAULTS["labels"])[cat], host, said)
+
+
+def tags(cat, host):
+    return "#%s #%s" % (cat, re.sub(r"\W", "_", host))
+
+
+def compose(prefix, host, notices, events, labels=None):
+    """One run's changes → (title, lines, loud, category). loud: something new is wrong (the rest arrives without
+    sound). The category is the most pressing thing in the message: urgent (something critical is open), attention
+    (a warning, or an event such as a reboot), security (only security events), resolved (only recoveries)."""
     lines = ["%s %s%s" % (ICON[level], "still: " if kind == "remind" else "", text) for kind, level, _, text in notices]
     lines += ["⚡ " + e.text for e in events]
     count = collections.Counter(kind for kind, _, _, _ in notices)
@@ -514,17 +529,18 @@ def compose(prefix, host, notices, events):
     parts = [("%d problem%s" % (new, "s" * (new > 1))) if new else "", "%d still open" % count["remind"] if count["remind"] else "",
              "%d resolved" % count["resolved"] if count["resolved"] else "", ("%d event%s" % (len(events), "s" * (len(events) > 1))) if events else ""]
     bad = [level for kind, level, _, _ in notices if kind != "resolved"]
-    head = ICON[CRIT] if CRIT in bad else ICON[WARN] if bad else "⚡" if events else ICON[OK]
-    return "%s %s %s: %s" % (prefix, head, host, ", ".join(p for p in parts if p)), lines, bool(new or events)
+    cat = ("urgent" if CRIT in bad else "attention" if bad else "resolved" if not events
+           else "security" if all(e.key.startswith("sec:") for e in events) else "attention")
+    return headline(prefix, cat, host, ", ".join(p for p in parts if p), labels), lines + [tags(cat, host)], bool(new or events), cat
 
 
-def report(prefix, host, readings):
+def report(prefix, host, readings, labels=None):
     """The daily report: every reading, bad ones first. It arriving at all says the monitor is alive."""
     bad = [r for r in readings if r.level != OK]
     up = (read("/proc/uptime") or "").split()
     lines = (["up %s" % dur(float(up[0]))] if up else []) + ["%s %s" % (ICON[r.level], r.text) for r in sorted(readings, key=lambda r: -RANK[r.level])]
     said = "%d of %d checks failing" % (len(bad), len(readings)) if bad else "all %d checks OK" % len(readings)
-    return "%s 📊 %s: daily report, %s" % (prefix, host, said), lines, False
+    return headline(prefix, "stats", host, "daily report, " + said, labels), lines + [tags("stats", host)], False, "stats"
 
 
 # ---------- channels: each → (took it, why not) ----------
@@ -612,7 +628,8 @@ def pushplus(n, title, lines, loud):
 
 
 def webhook(n, title, lines, loud):
-    return answered(*http(n["webhook_url"], {"title": title, "body": "\n".join(lines), "level": "alert" if loud else "info", "source": "infrawatch"}))
+    return answered(*http(n["webhook_url"], {"title": title, "body": "\n".join(lines), "level": "alert" if loud else "info",
+                                             "category": n.get("category", ""), "source": "infrawatch"}))
 
 
 CHANNELS = [("telegram", "tg_bot_token", telegram), ("wecom", "qywx_key", wecom), ("feishu", "fskey", feishu),
@@ -620,10 +637,12 @@ CHANNELS = [("telegram", "tg_bot_token", telegram), ("wecom", "qywx_key", wecom)
             ("serverchan", "push_key", serverchan), ("pushplus", "push_plus_token", pushplus), ("webhook", "webhook_url", webhook)]
 
 
-def send(n, title, lines, loud=True, say=None):
+def send(n, title, lines, loud=True, say=None, cat=""):
     """To every configured channel → True when at least one took it. Failures go to stderr (the journal), never with
     a token in them; `say` gets one line a channel (the test command)."""
     took, any_set = False, False
+    if cat:  # a category with its own Telegram topic goes there
+        n = dict(n, category=cat, tg_thread_id=n.get("tg_thread_" + cat) or n.get("tg_thread_id", ""))
     for name, key, fn in CHANNELS:
         if not n.get(key):
             continue
@@ -700,7 +719,7 @@ def gather(cfg, st, now):
 
 def run(cfg, st, now, force_report=False):
     """One monitoring run: read, compare, send. st is updated in place and saved by the caller."""
-    a, n, prefix = cfg["alerting"], cfg["notify"], cfg["notify"]["prefix"]
+    a, n, prefix, labels = cfg["alerting"], cfg["notify"], cfg["notify"]["prefix"], cfg["labels"]
     host = cfg["host"]["name"] or socket.gethostname()
     readings, events = gather(cfg, st, now)
     notices = evaluate(st, readings, now, a.getint("fail_threshold"), a.getint("ok_threshold"), a.getfloat("remind_hours") * 3600)
@@ -712,21 +731,24 @@ def run(cfg, st, now, force_report=False):
             told = set(key for _, _, key, _ in notices)
             notices += [("remind", c["level"], k, c.get("text", k)) for k, c in st["checks"].items() if c["level"] != OK and k not in told]
         if notices or events:
-            queue.append(compose(prefix, host, notices, events))
+            queue.append(compose(prefix, host, notices, events, labels))
         lt, at = time.localtime(now), cfg["host"]["daily_report"].strip()  # "08:00" in the machine's own time zone
         today, (hh, _, mm) = time.strftime("%Y-%m-%d", lt), at.partition(":")
         if force_report or (at and st.get("report_day") != today and (lt.tm_hour, lt.tm_min) >= (int(hh), int(mm or 0))):
             st["report_day"] = today
-            queue.append(report(prefix, host, readings))
-    for title, lines, loud in queue:
-        if not send(n, title, lines, loud):
-            st.setdefault("outbox", []).append([title, lines, loud])
+            queue.append(report(prefix, host, readings, labels))
+    for title, lines, loud, *cat in queue:  # a message kept by an older version has no category
+        if not send(n, title, lines, loud, cat="".join(cat)):
+            st.setdefault("outbox", []).append([title, lines, loud] + list(cat))
     st["outbox"] = st.get("outbox", [])[-20:]
     st["last_run"] = now
     hb = cfg["heartbeat"]
     if hb["url"]:  # proof of life for whoever watches this host (the Cloudflare Worker, healthchecks.io, …)
-        bad = [c["level"] for c in st["checks"].values() if c["level"] != OK]
-        code, body = http(hb["url"], {"host": host, "open": len(bad), "crit": bad.count(CRIT)},
+        bad = sorted(((k, c) for k, c in st["checks"].items() if c["level"] != OK), key=lambda kc: -RANK[kc[1]["level"]])
+        # The open alerts go along, so whoever takes the heartbeat can hand them to an agent (the Worker's
+        # /incidents). None while silenced: a state caused on purpose is not something to act on.
+        alerts = [] if st.get("silenced") else [{"key": k, "level": c["level"], "text": c.get("text", k)[:200], "since": int(c.get("since", now))} for k, c in bad[:30]]
+        code, body = http(hb["url"], {"host": host, "open": len(bad), "crit": sum(c["level"] == CRIT for _, c in bad), "alerts": alerts},
                           {"Authorization": "Bearer " + hb["token"]} if hb["token"] else None)
         if not 200 <= code < 300:
             print("infrawatch: heartbeat not taken: HTTP %d %s" % (code, body[:120]), file=sys.stderr)

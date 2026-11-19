@@ -1,0 +1,24 @@
+[Unit]
+Description=opsagent: agents in the alert chat
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# Its own user: it holds the SSH key the agents use and nothing else.
+User=opsagent
+Group=opsagent
+ExecStart=/usr/bin/python3 /opt/opsagent/opsagent.py run --config /etc/opsagent/agents.ini --state /var/lib/opsagent/state.json
+Restart=always
+RestartSec=10
+StateDirectory=opsagent
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+# Claude Code keeps its sessions and settings in the home directory.
+ReadWritePaths=/var/lib/opsagent /home/opsagent
+# Ask running work to end its turn before the service goes down.
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

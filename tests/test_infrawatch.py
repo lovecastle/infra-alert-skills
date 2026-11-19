@@ -117,15 +117,23 @@ class Evaluate(unittest.TestCase):
 
 class Compose(unittest.TestCase):
     def test_title_counts_and_loudness(self):
-        title, lines, loud = iw.compose("[iw]", "vps-01", [("open", CRIT, "a", "disk /: 96% used"), ("resolved", OK, "b", "memory: 40% used (after 12m)")], [E("oom", "out of memory, killed: node")])
-        self.assertEqual(title, "[iw] 🔴 vps-01: 1 problem, 1 resolved, 1 event")
-        self.assertEqual(lines, ["🔴 disk /: 96% used", "✅ memory: 40% used (after 12m)", "⚡ out of memory, killed: node"])
-        self.assertTrue(loud)
+        title, lines, loud, cat = iw.compose("[iw]", "vps-01", [("open", CRIT, "a", "disk /: 96% used"), ("resolved", OK, "b", "memory: 40% used (after 12m)")], [E("oom", "out of memory, killed: node")])
+        self.assertEqual(title, "[iw] 🔴 URGENT | vps-01: 1 problem, 1 resolved, 1 event")
+        self.assertEqual(lines, ["🔴 disk /: 96% used", "✅ memory: 40% used (after 12m)", "⚡ out of memory, killed: node", "#urgent #vps_01"])
+        self.assertEqual((loud, cat), (True, "urgent"))
 
     def test_a_recovery_alone_is_quiet(self):
-        title, _, loud = iw.compose("[iw]", "h", [("resolved", OK, "b", "x")], [])
-        self.assertEqual(title, "[iw] ✅ h: 1 resolved")
-        self.assertFalse(loud)
+        title, _, loud, cat = iw.compose("[iw]", "h", [("resolved", OK, "b", "x")], [])
+        self.assertEqual(title, "[iw] ✅ RESOLVED | h: 1 resolved")
+        self.assertEqual((loud, cat), (False, "resolved"))
+
+    def test_category_is_the_most_pressing_thing_in_the_message(self):
+        warn, sec, oom = ("open", WARN, "a", "disk /: 86% used"), E("sec:login", "SSH login: root from 1.2.3.4 (publickey)"), E("oom", "out of memory, killed: node")
+        cat = lambda notices, events: iw.compose("[iw]", "h", notices, events)[3]
+        self.assertEqual([cat([warn], [sec]), cat([], [sec]), cat([], [sec, oom]), cat([("worse", CRIT, "a", "x"), warn], [])], ["attention", "security", "attention", "urgent"])
+        labels = dict(iw.DEFAULTS["labels"], urgent="CẦN XỬ LÝ GẤP")  # the word is the team's; the tag stays the same
+        title, lines, _, _ = iw.compose("[iw]", "h", [("open", CRIT, "a", "x")], [], labels)
+        self.assertEqual((title, lines[-1]), ("[iw] 🔴 CẦN XỬ LÝ GẤP | h: 1 problem", "#urgent #h"))
 
 
 class Parsers(unittest.TestCase):
@@ -327,7 +335,13 @@ class Channels(Patched):
         self.assertEqual((ntfy[0], ntfy[1]["topic"], ntfy[2]), ("https://ntfy.sh/", "ops", {"Authorization": "Bearer tk"}))
         self.assertEqual((sc[0], sc[3]), ("https://123.push.ft07.com/send/sctp123tabc.send", True))
         self.assertEqual(pp[1]["token"], "P")
-        self.assertEqual(hook[1], {"title": "title", "body": "line", "level": "alert", "source": "infrawatch"})
+        self.assertEqual(hook[1], {"title": "title", "body": "line", "level": "alert", "category": "", "source": "infrawatch"})
+
+    def test_a_category_with_its_own_topic_goes_there(self):
+        n = {"tg_bot_token": "T", "tg_chat_id": "-1001", "tg_thread_id": "7", "tg_thread_urgent": "9", "webhook_url": "https://hook.example"}
+        for cat in ("urgent", "stats", ""):
+            iw.send(n, "t", ["l"], cat=cat)
+        self.assertEqual([d.get("message_thread_id") or d.get("category") for _, d, _, _ in self.sent], [9, "urgent", 7, "stats", 7, ""])
 
     def test_signatures_match_the_documented_algorithms(self):
         # HMAC-SHA256 then base64. Feishu: key "<ts>\n<secret>", empty message. DingTalk: key secret, message "<ts>\n<secret>".
@@ -386,7 +400,7 @@ class EndToEnd(Patched):
         st, low = {}, "MemTotal: 1000 kB\nMemAvailable: 20 kB\n"
         iw.run(self.cfg, st, 0)
         self.assertEqual(self.messages(), [])  # all fine on a first run: nothing to say
-        self.assertEqual(self.server.got[-1], ("/hb/vps-01", {"host": "vps-01", "open": 0, "crit": 0}, "Bearer hbsecret"))
+        self.assertEqual(self.server.got[-1], ("/hb/vps-01", {"host": "vps-01", "open": 0, "crit": 0, "alerts": []}, "Bearer hbsecret"))
         self.files["/proc/meminfo"] = low
         iw.run(self.cfg, st, 60)
         iw.run(self.cfg, st, 120)
@@ -394,16 +408,17 @@ class EndToEnd(Patched):
         self.server.broken = True  # Telegram is down exactly when the alert opens
         iw.run(self.cfg, st, 180)
         self.assertEqual(len(st["outbox"]), 1)
+        st["outbox"][0] = st["outbox"][0][:3]  # as an older version kept it, without a category
         self.server.broken = False
         self.server.got.clear()
         iw.run(self.cfg, st, 240)  # the kept message goes out with the next run
-        self.assertEqual(self.messages(), ["<b>[infrawatch] 🔴 vps-01: 1 problem</b>\n🔴 memory: 98% used, 20 KB available"])
+        self.assertEqual(self.messages(), ["<b>[infrawatch] 🔴 URGENT | vps-01: 1 problem</b>\n🔴 memory: 98% used, 20 KB available\n#urgent #vps_01"])
         self.assertEqual(st["outbox"], [])
-        self.assertEqual(self.server.got[-1][1], {"host": "vps-01", "open": 1, "crit": 1})
+        self.assertEqual(self.server.got[-1][1], {"host": "vps-01", "open": 1, "crit": 1, "alerts": [{"key": "memory", "level": "crit", "text": "memory: 98% used, 20 KB available", "since": 180}]})
         self.files["/proc/meminfo"] = "MemTotal: 1000 kB\nMemAvailable: 500 kB\n"
         iw.run(self.cfg, st, 300)
         iw.run(self.cfg, st, 360)
-        self.assertEqual(self.messages()[-1], "<b>[infrawatch] ✅ vps-01: 1 resolved</b>\n✅ memory: 50% used, 500 KB available (after 3m)")
+        self.assertEqual(self.messages()[-1], "<b>[infrawatch] ✅ RESOLVED | vps-01: 1 resolved</b>\n✅ memory: 50% used, 500 KB available (after 3m)\n#resolved #vps_01")
 
     def test_silence_holds_messages_then_says_what_is_still_wrong(self):
         st = {"silence_until": 500}
@@ -412,15 +427,16 @@ class EndToEnd(Patched):
             iw.run(self.cfg, st, now)
         self.assertEqual(self.messages(), [])
         self.assertEqual(st["checks"]["memory"]["level"], CRIT)  # it kept watching
+        self.assertEqual(self.server.got[-1][1], {"host": "vps-01", "open": 1, "crit": 1, "alerts": []})  # and gives agents nothing to act on
         iw.run(self.cfg, st, 600)
-        self.assertEqual(self.messages(), ["<b>[infrawatch] 🔴 vps-01: 1 still open</b>\n🔴 still: memory: 98% used, 20 KB available"])
+        self.assertEqual(self.messages(), ["<b>[infrawatch] 🔴 URGENT | vps-01: 1 still open</b>\n🔴 still: memory: 98% used, 20 KB available\n#urgent #vps_01"])
 
     def test_daily_report_once_a_day(self):
         self.cfg["host"]["daily_report"] = "00:00"
         st = {}
         iw.run(self.cfg, st, 1_700_000_000)
         iw.run(self.cfg, st, 1_700_000_060)
-        self.assertEqual(self.messages(), ["<b>[infrawatch] 📊 vps-01: daily report, all 1 checks OK</b>\n✅ memory: 50% used, 500 KB available"])
+        self.assertEqual(self.messages(), ["<b>[infrawatch] 📊 STATS | vps-01: daily report, all 1 checks OK</b>\n✅ memory: 50% used, 500 KB available\n#stats #vps_01"])
         iw.run(self.cfg, st, 1_700_000_000 + 86400)
         self.assertEqual(len(self.messages()), 2)
 

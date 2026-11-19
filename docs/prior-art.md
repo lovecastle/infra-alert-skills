@@ -59,6 +59,32 @@ monitoring), send-only (it posts a message), or tied to a live session. That gap
 Not verified first-hand: the ClawHub and Tencent SkillHub registries did not render for us, so skills listed only
 there (several "server monitor" entries) are not assessed here.
 
+## Categories, and agents that act from a chat
+
+Read in November 2026 for version 0.2 (alert categories and `run-ops-agents`).
+
+| Source | What we learned from it |
+|---|---|
+| [Google SRE book](https://sre.google/sre-book/introduction/), [OpenShift alerting consistency](https://github.com/openshift/enhancements/blob/master/enhancements/monitoring/alerting-consistency.md), [Prometheus alerting practices](https://prometheus.io/docs/practices/alerting/) | Three kinds of output: act now, act soon, read later. No page where there is nothing to do. Our URGENT / ATTENTION / STATS |
+| [Flashduty](https://docs.flashduty.com/zh/flashduty/what-is-incident), [HertzBeat](https://hertzbeat.apache.org/zh-cn/docs/help/alert_threshold) | Severity is separate from state (待处理 → 处理中 → 已关闭); an incident nobody claims in time escalates. The Chinese words for the levels differ between products, so ours are configurable |
+| [Telegram Bot API changelog](https://core.telegram.org/bots/api-changelog), [bot features](https://core.telegram.org/bots/features), [FAQ](https://core.telegram.org/bots/faq) | Bots can see some messages of other bots since Bot API 10.0 (May 2026), behind a setting, and the FAQ still says they cannot. We do not depend on it: agents read incidents from the Worker and hand work to each other in-process. Privacy mode must be off for a bot to see mentions reliably. The clicker of a button is `callback_query.from.id` |
+| [HolmesGPT](https://github.com/robusta-dev/holmesgpt) and its [bash toolset](https://holmesgpt.dev/latest/data-sources/builtin-toolsets/bash/) | Read-only by design; an allowlist of command prefixes; `sudo` blocked. Ours: the allowlist lives on the server, in sudoers |
+| [incident.io investigations](https://docs.incident.io/investigations/trust-and-safety), [PagerDuty SRE agent](https://docs.pagerduty.com/ai-automation/advance/sre-agent), [Rootly](https://rootly.com/ai-sre) | Commercial agents recommend and wait for a person; unprompted fixes are off by default. An agent can be a level in the escalation chain |
+| [华为云 CCE + 飞书](https://support.huaweicloud.com/skill-cce/cce_skill_0008.html) | The closest to ours: read-only triage, then options with scope, rollback and verification, executed only after an explicit confirmation in the chat |
+| OpenClaw [groups](https://docs.openclaw.ai/channels/groups), [multi-agent](https://docs.openclaw.ai/concepts/multi-agent), [approvals](https://docs.openclaw.ai/tools/exec-approvals-advanced) | One bot account per agent; agents talk inside the gateway, not through the chat; approvers are a list of numeric ids, separate from who is in the chat; a prompt that times out is a no |
+| [Claude Code channels](https://code.claude.com/docs/en/channels), [headless mode](https://code.claude.com/docs/en/headless) | Channels feed a live session, and anyone who can reply can approve: not what an unattended agent needs. Headless `claude -p` with a JSON schema, an allowlist of tools and `--resume` is |
+| [claude-code-telegram](https://github.com/RichardAtCT/claude-code-telegram), [ccbot](https://github.com/six-ddc/ccbot), [cc-connect](https://github.com/chenhg5/cc-connect) | Allowlisted user ids, tool allowlists, rate and cost caps, an audit log, a session per thread, a separate OS user. Also what to avoid: running the agent with permissions skipped |
+
+What these agree on, and what `run-ops-agents` does:
+
+1. Diagnosis never changes anything.
+2. Changes come from a short allowlist; everything else needs a person's yes, and the proposal says scope, undo and check.
+3. Who may approve is a list of ids, checked on the button press. Being in the chat grants nothing.
+4. No answer is a no, and then a person is called.
+5. Chat text, alert text and logs are data, not instructions; only listed senders can start an agent.
+6. Each agent has its own bot and account; agents do not take orders from bots.
+7. Every proposal, approval and run is logged; the report says what is uncertain.
+
 ## The rules we ended up with
 
 Taken together, the projects above agree on more than they differ:

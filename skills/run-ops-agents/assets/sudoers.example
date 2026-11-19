@@ -1,0 +1,15 @@
+# /etc/sudoers.d/opsagent on each server the agents look after. Install with: visudo -f /etc/sudoers.d/opsagent
+# Check the paths on your system (`command -v systemctl docker`): sudoers wants full paths.
+# A * matches anything, spaces included: it is used below only in commands that read.
+
+# Looking: status, logs, listings.
+opsagent ALL=(root) NOPASSWD: /usr/bin/systemctl status *, /usr/bin/systemctl list-units *, /usr/bin/systemctl list-timers *
+opsagent ALL=(root) NOPASSWD: /usr/bin/docker ps *, /usr/bin/docker logs *, /usr/bin/docker inspect *, /usr/bin/docker stats --no-stream, /usr/bin/docker system df
+opsagent ALL=(root) NOPASSWD: /usr/bin/ss -tlnp, /usr/bin/dmesg, /usr/bin/du -xh --max-depth=2 *
+opsagent ALL=(root) NOPASSWD: /usr/bin/python3 /opt/infrawatch/infrawatch.py status, /usr/bin/python3 /opt/infrawatch/infrawatch.py check
+
+# Fixing: exactly what you accept an agent doing without asking. Name each unit and container. Delete what you
+# do not want; add nothing with a wildcard.
+opsagent ALL=(root) NOPASSWD: /usr/bin/systemctl restart nginx.service
+opsagent ALL=(root) NOPASSWD: /usr/bin/docker restart app
+opsagent ALL=(root) NOPASSWD: /usr/bin/journalctl --vacuum-size=500M

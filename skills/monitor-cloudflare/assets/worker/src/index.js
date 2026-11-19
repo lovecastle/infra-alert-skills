@@ -6,12 +6,20 @@
 // machine that is off cannot say so itself: this is what notices.
 //
 // State is one small table in D1 (made on first use). GET /health answers 200 while the cron is running, 503 once it
-// has been silent 5 minutes: point a host's [http] check at it and the hosts watch the watcher back.
+// has been silent 5 minutes: point a host's [http] check at it and the hosts watch the watcher back. GET /incidents
+// (its own token) lists everything open right now, here and on the hosts: what an agent reads to know what to work on.
 import config from "./config.js";
 
 const OK = "ok", CRIT = "crit";
 const RANK = { ok: 0, warn: 1, crit: 2 }, ICON = { ok: "✅", warn: "🟠", crit: "🔴" };
 const PREFIX = "[infra-alerts]";
+// What a message asks of whoever reads it, as in infrawatch.py: a word in the title (config.js labels, any language)
+// and a tag on the last line that is the same everywhere. On Telegram a category can have its own topic
+// (secret TG_THREAD_URGENT, TG_THREAD_RESOLVED, TG_THREAD_STATS).
+const CATS = { urgent: "🔴", attention: "🟠", resolved: "✅", stats: "📊" };
+const LABELS = { urgent: "URGENT", attention: "ATTENTION", resolved: "RESOLVED", stats: "STATS" };
+const headline = (cat, name, said, labels) => `${PREFIX} ${CATS[cat]} ${{ ...LABELS, ...labels }[cat]} | ${name}: ${said}`;
+const tags = (cat, name) => `#${cat} #${name.replace(/\W/g, "_")}`;
 
 export function dur(s) {
   s = Math.floor(s);
@@ -51,19 +59,19 @@ export function evaluate(st, readings, now, { failThreshold = 2, okThreshold = 2
   return notices;
 }
 
-export function compose(name, notices) {
+export function compose(name, notices, labels) {
   const n = (kind) => notices.filter((x) => x.kind === kind).length, fresh = n("open") + n("worse");
   const parts = [fresh && `${fresh} problem${fresh > 1 ? "s" : ""}`, n("remind") && `${n("remind")} still open`, n("resolved") && `${n("resolved")} resolved`].filter(Boolean);
   const bad = notices.filter((x) => x.kind !== "resolved").map((x) => x.level);
-  const head = bad.includes(CRIT) ? ICON.crit : bad.length ? ICON.warn : ICON.ok;
-  return { title: `${PREFIX} ${head} ${name}: ${parts.join(", ")}`, lines: notices.map((x) => `${ICON[x.level]} ${x.kind === "remind" ? "still: " : ""}${x.text}`), loud: fresh > 0 };
+  const cat = bad.includes(CRIT) ? "urgent" : bad.length ? "attention" : "resolved";
+  return { title: headline(cat, name, parts.join(", "), labels), lines: [...notices.map((x) => `${ICON[x.level]} ${x.kind === "remind" ? "still: " : ""}${x.text}`), tags(cat, name)], loud: fresh > 0, cat };
 }
 
 // The daily message: everything watched, bad first. It arriving at all says the Worker is alive.
-export function report(name, readings) {
+export function report(name, readings, labels) {
   const bad = readings.filter((r) => r.level !== OK).length;
   const lines = [...readings].sort((a, b) => RANK[b.level] - RANK[a.level]).map((r) => `${ICON[r.level]} ${r.text}`);
-  return { title: `${PREFIX} 📊 ${name}: daily report, ${bad ? `${bad} of ${readings.length} checks failing` : `all ${readings.length} checks OK`}`, lines, loud: false };
+  return { title: headline("stats", name, `daily report, ${bad ? `${bad} of ${readings.length} checks failing` : `all ${readings.length} checks OK`}`, labels), lines: [...lines, tags("stats", name)], loud: false, cat: "stats" };
 }
 
 // ---------- readings ----------
@@ -91,6 +99,18 @@ export function heartbeats(cfg, rows, now) {
   });
 }
 
+// Everything open right now: what this Worker sees (probes, silent hosts) and what each host said in its last
+// heartbeat. A host that has gone silent is one incident; what it last said about itself is no longer news.
+export function incidents(cfg, rows, now) {
+  const out = Object.entries(JSON.parse(rows.state || "{}").checks || {}).filter(([, c]) => c.level !== OK)
+    .map(([key, c]) => ({ id: `${cfg.name}/${key}`, host: key.startsWith("host:") ? key.slice(5) : cfg.name, key, level: c.level, text: c.text, since: c.since, source: "worker" }));
+  for (const h of cfg.heartbeats || []) {
+    const beat = rows[`hb:${h.name}`] && JSON.parse(rows[`hb:${h.name}`]);
+    if (beat && now - beat.at <= (h.graceMinutes ?? 5) * 60) for (const a of beat.alerts || []) out.push({ id: `${h.name}/${a.key}`, host: h.name, ...a, source: "host" });
+  }
+  return out;
+}
+
 // ---------- channels: each resolves true when the service took the message ----------
 const post = (url, body) => fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(10_000) });
 const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]);
@@ -105,7 +125,9 @@ export async function sign(key, msg) {
 const CHANNELS = {
   async telegram(env, m) {
     const url = `${(env.TG_API_HOST || "https://api.telegram.org").replace(/\/+$/, "")}/bot${env.TG_BOT_TOKEN}/sendMessage`;
-    const base = { chat_id: env.TG_CHAT_ID, disable_web_page_preview: true, disable_notification: !m.loud, ...(env.TG_THREAD_ID ? { message_thread_id: Number(env.TG_THREAD_ID) } : {}) };
+    const base = { chat_id: env.TG_CHAT_ID, disable_web_page_preview: true, disable_notification: !m.loud };
+    const thread = env[`TG_THREAD_${(m.cat || "").toUpperCase()}`] || env.TG_THREAD_ID; // a category with its own topic goes there
+    if (thread) base.message_thread_id = Number(thread);
     let res = await post(url, { ...base, text: `<b>${esc(m.title)}</b>\n${esc(m.lines.join("\n"))}`.slice(0, 4000), parse_mode: "HTML" });
     if (res.status === 400) res = await post(url, { ...base, text: [m.title, ...m.lines].join("\n").slice(0, 4000) }); // markup Telegram refuses goes again as plain text
     return res.ok;
@@ -124,7 +146,7 @@ const CHANNELS = {
     return coded(await post(`https://oapi.dingtalk.com/robot/send?access_token=${env.DD_BOT_TOKEN}${signed}`, { msgtype: "text", text: { content: plain(m) } }), "errcode");
   },
   async webhook(env, m) {
-    return (await post(env.WEBHOOK_URL, { title: m.title, body: m.lines.join("\n"), level: m.loud ? "alert" : "info", source: "infra-alerts" })).ok;
+    return (await post(env.WEBHOOK_URL, { title: m.title, body: m.lines.join("\n"), level: m.loud ? "alert" : "info", category: m.cat || "", source: "infra-alerts" })).ok;
   },
 };
 const CONFIGURED = { telegram: (e) => e.TG_BOT_TOKEN && e.TG_CHAT_ID, wecom: (e) => e.QYWX_KEY, feishu: (e) => e.FSKEY, dingtalk: (e) => e.DD_BOT_TOKEN, webhook: (e) => e.WEBHOOK_URL };
@@ -158,9 +180,9 @@ export async function tick(env, now = Math.floor(Date.now() / 1000), cfg = confi
   const readings = [...(await Promise.all((cfg.probes || []).map(probe))), ...heartbeats(cfg, rows, now)];
   const notices = evaluate(st, readings, now, cfg);
   const queue = st.outbox || [];
-  if (notices.length) queue.push(compose(cfg.name, notices));
+  if (notices.length) queue.push(compose(cfg.name, notices, cfg.labels));
   const { day, hour } = local(cfg, now);
-  if (cfg.dailyReportHour != null && st.reportDay !== day && hour >= cfg.dailyReportHour) { st.reportDay = day; queue.push(report(cfg.name, readings)); }
+  if (cfg.dailyReportHour != null && st.reportDay !== day && hour >= cfg.dailyReportHour) { st.reportDay = day; queue.push(report(cfg.name, readings, cfg.labels)); }
   st.outbox = [];
   for (const m of queue) if (!(await send(env, m))) st.outbox.push(m);
   st.outbox = st.outbox.slice(-20);
@@ -171,9 +193,9 @@ export async function tick(env, now = Math.floor(Date.now() / 1000), cfg = confi
   return { readings, notices };
 }
 
-function authorized(request, env) {
-  const enc = new TextEncoder(), given = enc.encode(request.headers.get("Authorization") || ""), want = enc.encode(`Bearer ${env.HEARTBEAT_TOKEN}`);
-  return !!env.HEARTBEAT_TOKEN && given.byteLength === want.byteLength && crypto.subtle.timingSafeEqual(given, want);
+function authorized(request, token) {
+  const enc = new TextEncoder(), given = enc.encode(request.headers.get("Authorization") || ""), want = enc.encode(`Bearer ${token}`);
+  return !!token && given.byteLength === want.byteLength && crypto.subtle.timingSafeEqual(given, want);
 }
 
 export async function handle(request, env, cfg = config, now = Math.floor(Date.now() / 1000)) {
@@ -182,12 +204,18 @@ export async function handle(request, env, cfg = config, now = Math.floor(Date.n
     const st = JSON.parse((await load(env)).state || "{}"), fresh = st.lastRun && now - st.lastRun < 300;
     return new Response(fresh ? "ok" : "stale", { status: fresh ? 200 : 503 });
   }
+  if (request.method === "GET" && pathname === "/incidents") { // for agents; its own token, so a host's token cannot read the others
+    if (!authorized(request, env.AGENT_TOKEN)) return new Response("unauthorized", { status: 401 });
+    return Response.json({ now, incidents: incidents(cfg, await load(env), now) });
+  }
   if (request.method !== "POST") return new Response("not found", { status: 404 });
-  if (!authorized(request, env)) return new Response("unauthorized", { status: 401 });
+  if (!authorized(request, env.HEARTBEAT_TOKEN)) return new Response("unauthorized", { status: 401 });
   const host = /^\/hb\/([\w.-]{1,64})$/.exec(pathname)?.[1];
   if (host && (cfg.heartbeats || []).some((h) => h.name === host)) {
     const body = await request.json().catch(() => ({}));
-    await save(env, `hb:${host}`, JSON.stringify({ at: now, open: Number(body?.open) || 0, crit: Number(body?.crit) || 0 }));
+    const alerts = (Array.isArray(body?.alerts) ? body.alerts : []).slice(0, 30) // what the host says is open on it, kept for /incidents
+      .map((a) => ({ key: String(a?.key).slice(0, 100), level: a?.level === CRIT ? CRIT : "warn", text: String(a?.text).slice(0, 200), since: Number(a?.since) || now }));
+    await save(env, `hb:${host}`, JSON.stringify({ at: now, open: Number(body?.open) || 0, crit: Number(body?.crit) || 0, alerts }));
     return new Response("ok");
   }
   if (pathname === "/test") {

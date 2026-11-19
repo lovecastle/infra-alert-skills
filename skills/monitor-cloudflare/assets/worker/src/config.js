@@ -7,6 +7,8 @@ export default {
   failThreshold: 2,        // bad minutes in a row before a probe alerts
   okThreshold: 2,          // good minutes in a row before it is called back up
   remindHours: 4,          // say again while something is still down; 0 = never
+  // The word in a message's title for each category, in your language. The tags (#urgent, …) stay the same.
+  // labels: { urgent: "URGENT", resolved: "RESOLVED", stats: "STATS" },
 
   // URLs asked every minute from Cloudflare's network. Free plan: 50 subrequests a run, so keep this under ~40.
   probes: [

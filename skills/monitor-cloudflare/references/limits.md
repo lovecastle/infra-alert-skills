@@ -39,7 +39,8 @@ cuts it at 4000 characters.
 - **A send that fails** (Telegram down, a wrong token) is kept in the state and sent with the next run, up to 20
   messages.
 - **State**: one D1 table `kv`: row `state` (open alerts, counters, the outbox, when the cron last ran) and one
-  row `hb:<host>` per host. It is created on first use; there is no migration to run.
+  row `hb:<host>` per host (when it last pinged, and the alerts it said were open: what `/incidents` hands to
+  agents). It is created on first use; there is no migration to run.
 
 ## Watching the watcher
 
@@ -61,7 +62,7 @@ bot rules apply to the probe, and a probe must never point at a URL routed to th
 ## What it does not do
 
 - No status page and no history: it tells a chat, and D1 holds only the current state.
-- No checks of Cloudflare analytics (5xx rate, Worker errors, quota use). See the case study in the repository's
-  `docs/` for how one team does that with the GraphQL Analytics API.
+- No checks of Cloudflare analytics (5xx rate, Worker errors, quota use). The approach is described in the
+  repository's `docs/approach.md`; it depends on the application, so it is not packaged here.
 - One region's view: probes run wherever Cloudflare schedules the cron. A site down in one country only is not
   seen.

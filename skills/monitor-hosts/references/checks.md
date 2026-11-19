@@ -85,13 +85,33 @@ again if still true).
 ## Message format
 
 ```
-[infrawatch] 🔴 vps-01: 1 problem, 1 resolved
+[infrawatch] 🔴 URGENT | vps-01: 1 problem, 1 resolved
 🔴 disk /: 96% used, 1.8 GB free
 ✅ http api: HTTP 200 (after 12m)
+#urgent #vps_01
 ```
 
 One message per run. The title counts new problems, reminders ("still open"), recoveries and events. `[notify]
 prefix` changes `[infrawatch]`; keep the word `infra` in it if a DingTalk or Feishu bot uses keyword security.
+
+### Categories
+
+Every message has one category: the most pressing thing in it. It says what the message asks of the reader.
+
+| Category | Tag | When | Sound |
+|---|---|---|---|
+| 🔴 URGENT | `#urgent` | Something critical is open: new, got worse, or the 4-hourly reminder. Act now | yes |
+| 🟠 ATTENTION | `#attention` | A warning opened, or an event happened (reboot, OOM kill, GPU Xid). Look today | yes |
+| 🛡 SECURITY | `#security` | Only security events: a new login, a changed file, a new port. "Was that you?" | yes |
+| ✅ RESOLVED | `#resolved` | Only recoveries, each with how long it lasted | no |
+| 📊 STATS | `#stats` | The daily report | no |
+
+- The word in the title is yours: `[labels]` in the config, in any language. The tag never changes, so tapping
+  `#urgent` in Telegram lists every urgent message, and `#vps_01` every message of that host.
+- On Telegram each category can have its own topic of a forum group: `tg_thread_urgent`, `tg_thread_attention`,
+  `tg_thread_security`, `tg_thread_resolved`, `tg_thread_stats` (a category without one uses `tg_thread_id`). To
+  keep a recovery next to the alert it closes, give `resolved` the same topic as `urgent`.
+- The generic webhook gets the category as a field: `"category": "urgent"`.
 
 ## Where secrets live
 

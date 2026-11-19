@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import nodeCrypto from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { beforeEach, test } from "node:test";
-import { compose, dur, evaluate, handle, heartbeats, report, sign, tick } from "../skills/monitor-cloudflare/assets/worker/src/index.js";
+import { compose, dur, evaluate, handle, heartbeats, report, send, sign, tick } from "../skills/monitor-cloudflare/assets/worker/src/index.js";
 
 crypto.subtle.timingSafeEqual ??= (a, b) => nodeCrypto.timingSafeEqual(a, b); // workerd has it built in
 
@@ -51,9 +51,10 @@ test("evaluate: opens after failThreshold, resolves after okThreshold, reminds w
 
 test("compose and report", () => {
   assert.deepEqual(compose("prod", [{ kind: "open", level: "crit", key: "a", text: "site: HTTP 502" }, { kind: "resolved", level: "ok", key: "b", text: "api: HTTP 200 (after 3m)" }]),
-    { title: "[infra-alerts] 🔴 prod: 1 problem, 1 resolved", lines: ["🔴 site: HTTP 502", "✅ api: HTTP 200 (after 3m)"], loud: true });
-  assert.equal(compose("prod", [{ kind: "resolved", level: "ok", key: "b", text: "x" }]).loud, false);
-  assert.deepEqual(report("prod", [{ level: "ok", text: "a" }, { level: "crit", text: "b" }]), { title: "[infra-alerts] 📊 prod: daily report, 1 of 2 checks failing", lines: ["🔴 b", "✅ a"], loud: false });
+    { title: "[infra-alerts] 🔴 URGENT | prod: 1 problem, 1 resolved", lines: ["🔴 site: HTTP 502", "✅ api: HTTP 200 (after 3m)", "#urgent #prod"], loud: true, cat: "urgent" });
+  const quiet = compose("my site", [{ kind: "resolved", level: "ok", key: "b", text: "x" }], { resolved: "ĐÃ ỔN" });
+  assert.deepEqual([quiet.loud, quiet.cat, quiet.title, quiet.lines.at(-1)], [false, "resolved", "[infra-alerts] ✅ ĐÃ ỔN | my site: 1 resolved", "#resolved #my_site"]);
+  assert.deepEqual(report("prod", [{ level: "ok", text: "a" }, { level: "crit", text: "b" }]), { title: "[infra-alerts] 📊 STATS | prod: daily report, 1 of 2 checks failing", lines: ["🔴 b", "✅ a", "#stats #prod"], loud: false, cat: "stats" });
 });
 
 test("heartbeats: never seen is not down; silent past grace is", () => {
@@ -77,14 +78,14 @@ test("tick: a probe down two minutes is told once, then its recovery with the du
   await tick(env, 60, c);
   assert.deepEqual(texts(), []);
   await tick(env, 120, c);
-  assert.deepEqual(texts(), ["<b>[infra-alerts] 🔴 prod: 1 problem</b>\n🔴 site: HTTP 502"]);
+  assert.deepEqual(texts(), ["<b>[infra-alerts] 🔴 URGENT | prod: 1 problem</b>\n🔴 site: HTTP 502\n#urgent #prod"]);
   assert.deepEqual([sent[0].chat_id, sent[0].parse_mode, sent[0].disable_notification], ["-100", "HTML", false]);
   await tick(env, 180, c);
   assert.equal(sent.length, 1);
   answers["https://site/"] = 200;
   await tick(env, 240, c);
   await tick(env, 300, c);
-  assert.match(texts()[1], /^<b>\[infra-alerts\] ✅ prod: 1 resolved<\/b>\n✅ site: HTTP 200 in \d+ ms \(after 3m\)$/);
+  assert.match(texts()[1], /^<b>\[infra-alerts\] ✅ RESOLVED \| prod: 1 resolved<\/b>\n✅ site: HTTP 200 in \d+ ms \(after 3m\)\n#resolved #prod$/);
   assert.equal(sent[1].disable_notification, true);
 });
 
@@ -94,7 +95,7 @@ test("tick: wrong body, timeout and thrown errors are down", async () => {
   answers["https://slow/"] = Object.assign(new Error("x"), { name: "TimeoutError" });
   answers["https://dns/"] = new Error("getaddrinfo ENOTFOUND dns");
   await tick(env, 0, c);
-  assert.equal(texts()[0], '<b>[infra-alerts] 🔴 prod: 3 problems</b>\n🔴 api: HTTP 200 but the answer lacks "ok"\n🔴 slow: no answer (timed out)\n🔴 dns: no answer (getaddrinfo ENOTFOUND dns)');
+  assert.equal(texts()[0], '<b>[infra-alerts] 🔴 URGENT | prod: 3 problems</b>\n🔴 api: HTTP 200 but the answer lacks "ok"\n🔴 slow: no answer (timed out)\n🔴 dns: no answer (getaddrinfo ENOTFOUND dns)\n#urgent #prod');
 });
 
 test("tick: a message Telegram refused goes out with the next run", async () => {
@@ -105,7 +106,7 @@ test("tick: a message Telegram refused goes out with the next run", async () => 
   answers.telegram = 200;
   sent.length = 0;
   await tick(env, 60, c);
-  assert.deepEqual(texts(), ["<b>[infra-alerts] 🔴 prod: 1 problem</b>\n🔴 site: HTTP 500"]);
+  assert.deepEqual(texts(), ["<b>[infra-alerts] 🔴 URGENT | prod: 1 problem</b>\n🔴 site: HTTP 500\n#urgent #prod"]);
   await tick(env, 120, c);
   assert.equal(sent.length, 1);
 });
@@ -117,7 +118,7 @@ test("telegram: markup refused with 400 goes again as plain text", async () => {
   const real = globalThis.fetch;
   globalThis.fetch = async (url, init) => (String(url).includes("/sendMessage") && first ? ((first = false), sent.push(JSON.parse(init.body)), new Response("{}", { status: 400 })) : real(url, init));
   await tick(env, 0, c);
-  assert.deepEqual(sent.map((m) => [m.text, m.parse_mode]), [["<b>[infra-alerts] 🔴 prod: 1 problem</b>\n🔴 a&lt;b: HTTP 500", "HTML"], ["[infra-alerts] 🔴 prod: 1 problem\n🔴 a<b: HTTP 500", undefined]]);
+  assert.deepEqual(sent.map((m) => [m.text, m.parse_mode]), [["<b>[infra-alerts] 🔴 URGENT | prod: 1 problem</b>\n🔴 a&lt;b: HTTP 500\n#urgent #prod", "HTML"], ["[infra-alerts] 🔴 URGENT | prod: 1 problem\n🔴 a<b: HTTP 500\n#urgent #prod", undefined]]);
 });
 
 test("heartbeat endpoint: token needed, known hosts only; silence past grace alerts and a ping recovers", async () => {
@@ -131,10 +132,10 @@ test("heartbeat endpoint: token needed, known hosts only; silence past grace ale
   await tick(env, 300, c);
   assert.deepEqual(texts(), []);
   await tick(env, 361, c);
-  assert.deepEqual(texts(), ["<b>[infra-alerts] 🔴 prod: 1 problem</b>\n🔴 vps-01: no heartbeat for 6m"]);
+  assert.deepEqual(texts(), ["<b>[infra-alerts] 🔴 URGENT | prod: 1 problem</b>\n🔴 vps-01: no heartbeat for 6m\n#urgent #prod"]);
   await ping("/hb/vps-01", "hbsecret", 900);
   await tick(env, 901, c);
-  assert.equal(texts()[1], "<b>[infra-alerts] ✅ prod: 1 resolved</b>\n✅ vps-01: heartbeat 1s ago (after 9m)");
+  assert.equal(texts()[1], "<b>[infra-alerts] ✅ RESOLVED | prod: 1 resolved</b>\n✅ vps-01: heartbeat 1s ago (after 9m)\n#resolved #prod");
   env.HEARTBEAT_TOKEN = "";
   assert.equal((await ping("/hb/vps-01", "", 0)).status, 401); // no token set: nothing is accepted
 });
@@ -164,7 +165,7 @@ test("daily report: once a day at the local hour", async () => {
   await tick(env, at("2026-11-18T01:00:00Z"), c); // 08:00
   await tick(env, at("2026-11-18T01:01:00Z"), c);
   assert.equal(sent.length, 1);
-  assert.match(texts()[0], /^<b>\[infra-alerts\] 📊 prod: daily report, all 1 checks OK<\/b>\n✅ site: HTTP 200 in \d+ ms$/);
+  assert.match(texts()[0], /^<b>\[infra-alerts\] 📊 STATS \| prod: daily report, all 1 checks OK<\/b>\n✅ site: HTTP 200 in \d+ ms\n#stats #prod$/);
   await tick(env, at("2026-11-19T01:00:00Z"), c);
   assert.equal(sent.length, 2);
 });
@@ -182,4 +183,34 @@ test("other channels: WeCom, Feishu (signed), DingTalk (signed), webhook", async
   assert.equal(fs.sign, nodeCrypto.createHmac("sha256", `${fs.timestamp}\nS`).update("").digest("base64"));
   assert.match(by["oapi.dingtalk.com"][0], /^https:\/\/oapi\.dingtalk\.com\/robot\/send\?access_token=D&timestamp=\d{13}&sign=[\w%]+$/);
   assert.equal(by["hook.example"][1].source, "infra-alerts");
+});
+
+test("a category with its own Telegram topic goes there", async () => {
+  Object.assign(env, { TG_THREAD_ID: "7", TG_THREAD_URGENT: "9" });
+  for (const cat of ["urgent", "stats", undefined]) await send(env, { title: "t", lines: [], loud: false, cat });
+  assert.deepEqual(sent.map((m) => m.message_thread_id), [9, 7, 7]);
+});
+
+test("/incidents: its own token; what the Worker sees plus what live hosts said in their last heartbeat", async () => {
+  const c = cfg({ probes: [{ name: "site", url: "https://site.example/" }], heartbeats: [{ name: "vps-01", graceMinutes: 5 }, { name: "vps-02", graceMinutes: 5 }] });
+  const get = (token, now) => handle(new Request("https://w.example/incidents", { headers: token ? { Authorization: `Bearer ${token}` } : {} }), env, c, now);
+  const beat = (host, now, alerts) => handle(new Request(`https://w.example/hb/${host}`, { method: "POST", headers: { Authorization: "Bearer hbsecret" }, body: JSON.stringify({ open: alerts.length, alerts }) }), env, c, now);
+  assert.equal((await get("hbsecret", 0)).status, 401); // no AGENT_TOKEN set: closed, and a host's token never opens it
+  env.AGENT_TOKEN = "agentsecret";
+  assert.equal((await get("hbsecret", 0)).status, 401);
+  assert.deepEqual(await (await get("agentsecret", 0)).json(), { now: 0, incidents: [] });
+  answers["https://site.example/"] = 502;
+  await beat("vps-01", 0, [{ key: "disk:/", level: "crit", text: "disk /: 96% used", since: -600 }, { key: "x".repeat(300), level: "nonsense", text: 5 }]);
+  await beat("vps-02", 0, [{ key: "memory", level: "warn", text: "memory: 91% used", since: -60 }]);
+  await tick(env, 0, c);
+  await tick(env, 60, c);
+  await beat("vps-01", 400, [{ key: "disk:/", level: "crit", text: "disk /: 97% used", since: -600 }]);
+  await tick(env, 420, c); // vps-02 has now been silent past its grace: one incident, not its stale alerts
+  const got = (await (await get("agentsecret", 420)).json()).incidents;
+  assert.deepEqual(got.map((i) => [i.id, i.host, i.level, i.text, i.source]), [
+    ["prod/probe:site", "prod", "crit", "site: HTTP 502", "worker"],
+    ["prod/host:vps-02", "vps-02", "crit", "vps-02: no heartbeat for 7m", "worker"],
+    ["vps-01/disk:/", "vps-01", "crit", "disk /: 97% used", "host"],
+  ]);
+  assert.equal(got[2].since, -600);
 });

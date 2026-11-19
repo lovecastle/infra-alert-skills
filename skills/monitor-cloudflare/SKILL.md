@@ -65,6 +65,9 @@ needs the token), `GET /health` (200 while the cron runs, 503 once it has been s
 
    Other channels use the same names as in `notify.env`: `TG_THREAD_ID`, `TG_API_HOST`, `QYWX_KEY`, `FSKEY`,
    `FSSECRET`, `FS_HOST`, `DD_BOT_TOKEN`, `DD_BOT_SECRET`, `WEBHOOK_URL`. Add each one that is set to the loop.
+   A Telegram topic per category of message: `TG_THREAD_URGENT`, `TG_THREAD_RESOLVED`, `TG_THREAD_STATS` (the
+   words in the titles are `labels` in `config.js`). `AGENT_TOKEN` opens `GET /incidents`, the list of everything
+   open that the `run-ops-agents` skill reads; without that secret the endpoint answers 401.
 
 6. **Verify**, in this order:
 

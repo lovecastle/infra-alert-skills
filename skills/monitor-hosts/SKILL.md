@@ -131,6 +131,9 @@ Config changes take effect on the next run; nothing to restart.
 - A critical problem still open is said again every 4 hours; warnings are said once.
 - Events (reboot, OOM kill, GPU Xid, security findings) are told once; there is nothing to recover from.
 - A message no channel accepted is kept and sent with the next run.
+- Every message carries a category: URGENT, ATTENTION, SECURITY, RESOLVED or STATS, as a word in the title
+  (`[labels]`, any language: ask the user which words their team wants) and a fixed tag (`#urgent`, …). Each can
+  go to its own Telegram topic. See [references/checks.md](references/checks.md#categories).
 
 ## Who watches the monitor
 

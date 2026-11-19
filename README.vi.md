@@ -7,12 +7,15 @@ sự cố đã hết: vài VPS, một máy GPU, các dịch vụ chạy sau Clou
 Feishu/Lark, DingTalk, Bark, ntfy, ServerChan, PushPlus, hay bất kỳ webhook nào.
 
 Bạn nói muốn theo dõi cái gì. Claude xem máy chủ, đề xuất những thứ nên theo dõi, cài một file monitor duy nhất,
-chứng minh cảnh báo thật sự tới nơi, và về sau giúp bạn tìm ra nguyên nhân của từng cảnh báo.
+chứng minh cảnh báo thật sự tới nơi, và về sau giúp bạn tìm ra nguyên nhân của từng cảnh báo. Nếu muốn, bạn đặt
+thêm agent ngay trong nhóm chat: chúng nhận những cảnh báo nghiêm trọng chưa ai xử lý, tự sửa những gì chính sách cho
+phép, hỏi trước khi làm việc khác, và trả lời khi được tag.
 
 ```
-[infrawatch] 🔴 vps-01: 1 problem, 1 resolved
+[infrawatch] 🔴 URGENT | vps-01: 1 problem, 1 resolved
 🔴 disk /: 96% used, 1.8 GB free
 ✅ http api: HTTP 200 (after 12m)
+#urgent #vps_01
 ```
 
 Bộ skill này bắt nguồn từ cách chúng tôi đang giám sát [allshorts.net](https://allshorts.net) (vài máy chủ, một
@@ -29,6 +32,7 @@ những gì học được từ từng dự án nằm ở [docs/prior-art.md](do
 | [`monitor-hosts`](skills/monitor-hosts/SKILL.md) | Cài `infrawatch.py` lên máy chủ Linux qua SSH: ổ đĩa, bộ nhớ, tải CPU, dịch vụ systemd, container Docker, endpoint HTTP/TCP, chứng chỉ TLS, GPU NVIDIA, khởi động lại, OOM kill, và tuỳ chọn theo dõi bảo mật |
 | [`monitor-cloudflare`](skills/monitor-cloudflare/SKILL.md) | Triển khai một Cloudflare Worker (gói miễn phí) hỏi các URL của bạn mỗi phút từ bên ngoài, và báo khi một máy chủ ngừng gửi heartbeat |
 | [`triage-alerts`](skills/triage-alerts/SKILL.md) | Nhận một cảnh báo, tìm nguyên nhân bằng các lệnh chỉ đọc, đề xuất cách sửa, và chỉnh những cảnh báo gây nhiễu |
+| [`run-ops-agents`](skills/run-ops-agents/SKILL.md) | Đưa agent vào nhóm Telegram nhận cảnh báo: một lead theo dõi sự cố và giao việc, các agent chẩn đoán, tự sửa trong phạm vi chính sách, xin duyệt bằng nút bấm, báo cáo, và trả lời khi được `@tag` |
 
 Hai thành phần, dùng riêng cũng được, dùng chung thì chắc hơn:
 
@@ -70,6 +74,9 @@ Cứ nói theo cách của bạn, bằng tiếng Việt cũng được. Ví dụ
 | Biết khi server hoặc website sập hẳn | "Triển khai watcher trên Cloudflare: kiểm tra https://example.com và báo nếu vps-01 hoặc vps-02 im lặng" |
 | Hiểu một cảnh báo | "Tôi vừa nhận được: `[infrawatch] 🔴 vps-01: memory: 97% used`. Chuyện gì đang xảy ra?" |
 | Yên lặng trong lúc deploy | "Tắt cảnh báo trên vps-01 trong một tiếng" |
+| Nhãn phân loại bằng tiếng Việt, mỗi loại một chủ đề | "Đặt nhãn cảnh báo bằng tiếng Việt và cho tin cần xử lý gấp vào chủ đề Xử lý gấp của nhóm" |
+| Agent trực trong nhóm cảnh báo | "Đưa một agent vào nhóm cảnh báo: sau 5 phút không ai phản ứng với cảnh báo nghiêm trọng thì nó tự xử lý, được restart dịch vụ, còn lại phải hỏi" |
+| Ra lệnh cho agent từ chat | Trong nhóm: `@web_bot vì sao vps-01 chậm?` |
 
 Claude luôn hỏi trước khi thay đổi bất cứ thứ gì trên máy chủ hay tạo tài nguyên trong tài khoản Cloudflare của
 bạn, và cho bạn xem một lần chạy thử (`infrawatch.py check`) trước khi bật giám sát.
@@ -112,6 +119,38 @@ Những quy tắc giữ cho kênh cảnh báo còn đáng đọc:
 - **Im lặng nhưng vẫn theo dõi**: `silence 2h` khi bảo trì; hết thời gian sẽ báo những gì vẫn còn hỏng.
 - **Báo cáo hằng ngày** kiêm bằng chứng còn sống: không thấy báo cáo nghĩa là chính monitor đang hỏng.
 - **Có người canh người canh gác**: máy chủ gửi heartbeat cho Worker; `/health` của Worker được máy chủ kiểm tra.
+
+**Mỗi tin đều có nhãn phân loại**, cho biết nó cần gì ở người đọc: 🔴 CẦN XỬ LÝ GẤP (`#urgent`), 🟠 CẦN CHÚ Ý
+(`#attention`), 🛡 BẢO MẬT (`#security`), ✅ ĐÃ ỔN (`#resolved`), 📊 THỐNG KÊ (`#stats`). Chữ trong tiêu đề do bạn
+đặt (mục `[labels]`, mặc định là tiếng Anh: URGENT, ATTENTION, …); thẻ `#` thì cố định để lọc tin trong chat. Trên
+Telegram mỗi loại có thể vào một chủ đề (topic) riêng, để tắt tiếng "Thống kê" và giữ "Xử lý gấp" kêu to.
+[Chi tiết](skills/monitor-hosts/references/checks.md#categories).
+
+## Agent trong nhóm chat (tuỳ chọn)
+
+Monitor báo vào chat; skill [`run-ops-agents`](skills/run-ops-agents/SKILL.md) thêm một "người" luôn có mặt để đọc.
+`opsagent.py` chạy một hoặc nhiều agent, mỗi agent là một bot Telegram trong nhóm cảnh báo của bạn:
+
+- **Lead agent theo dõi mọi sự cố đang mở** (lấy từ `/incidents` của Worker: mọi cảnh báo đang mở trên mọi máy và
+  những gì Worker thấy). Sự cố nghiêm trọng được báo kèm hai nút: *I take it* (tôi nhận) và *Start now* (làm ngay).
+- **Nếu chưa quản trị viên nào nhận sau thời gian chờ** (mặc định 5 phút), agent phụ trách máy đó bắt đầu: chẩn
+  đoán qua SSH bằng Claude Code chạy không giao diện, theo skill `triage-alerts`.
+- **Agent chỉ tự sửa những gì chính sách bạn viết cho phép** (restart một dịch vụ đã nêu tên, dọn log). Việc khác
+  thì nó gửi đề xuất (đã thấy gì, lệnh cụ thể, ảnh hưởng gì, hoàn tác thế nào, kiểm tra ra sao) kèm nút *Approve* và
+  *Refuse*. Không ai trả lời trong 30 phút nghĩa là không làm.
+- **Xong thì báo cáo ngay trong chat**: nguyên nhân, đã làm gì, kết quả, còn gì dang dở. Nếu 15 phút sau sự cố vẫn
+  mở, agent báo to và trả lại cho quản trị viên.
+- **Quản trị viên ra lệnh và trao đổi ngay trong chat**: `@agent <lệnh hoặc câu hỏi>`, hoặc trả lời tin của agent.
+  Nhóm có thể có nhiều agent, mỗi agent một mảng; lead giao việc cho đúng agent.
+- Lệnh cho agent: `/status`, `/pause` (ngừng tự nhận sự cố), `/resume`, `/stop` (dừng việc đang làm).
+
+Thứ giữ cho việc này an toàn không phải là phán đoán của mô hình. Chỉ những user id Telegram bạn liệt kê mới được
+nghe (có mặt trong nhóm không cho quyền gì); duyệt là một nút bấm do daemon kiểm tra; agent đăng nhập máy chủ bằng
+một tài khoản có danh sách sudo ngắn; `/pause` dừng tất cả. Hãy đọc
+[access.md](skills/run-ops-agents/references/access.md) trước khi cấp quyền.
+
+Agent rảnh thì không tốn gì: Claude Code chỉ được gọi khi có việc. Các thông báo ngắn của daemon là tiếng Anh; nội
+dung agent viết thì theo ngôn ngữ bạn đặt (`language = Vietnamese`).
 
 ## Những gì được cài
 
@@ -166,14 +205,19 @@ Chúng tôi không công bố số lượng cảnh báo, ngưỡng phát hiện 
 
 ## Tình trạng và phạm vi đã kiểm thử
 
-Phiên bản 0.1.0. Nói thẳng về một bản phát hành đầu:
+Phiên bản 0.2.0. Nói thẳng về một bản phát hành sớm:
 
-- `infrawatch.py`: 44 test, chạy trên Python 3.8 và 3.11. Các bộ thu thập được test với output ghi lại của `df`,
+- `infrawatch.py`: 46 test, chạy trên Python 3.8 và 3.11. Các bộ thu thập được test với output ghi lại của `df`,
   `/proc`, `systemctl`, `docker`, `nvidia-smi`, `ss`, `journalctl`; logic cảnh báo và các lệnh được test đầu cuối
   với một máy chủ giả đóng vai Telegram.
-- Worker: 14 test trên Node với SQL engine thật thay cho D1, và một lần chạy trong runtime của Cloudflare
+- Worker: 16 test trên Node với SQL engine thật thay cho D1, và một lần chạy trong runtime của Cloudflare
   (`wrangler dev`) qua kịch bản sập, phục hồi, heartbeat và các endpoint.
-- **Chưa làm:** phiên bản agent này chưa được tác giả chạy trên máy chủ Linux production, và các kênh ngoài
+- `opsagent.py`: 19 test trên Python 3.8 và 3.11, trong đó một test chạy cả daemon (luồng, long polling, nút bấm,
+  duyệt) với một máy chủ giả đóng vai Telegram và Worker, và một chương trình thế chỗ `claude -p`. Dòng lệnh đã được
+  Claude Code 2.1 thật chấp nhận; dạng câu trả lời có cấu trúc khi thành công thì theo tài liệu, chưa thấy từ một
+  lần chạy đã đăng nhập. **Nó chưa được chạy với Telegram thật hay trên sự cố thật.** Hãy bắt đầu với
+  `grace_minutes` lớn, danh sách sudo ngắn, và theo dõi nó.
+- **Chưa làm:** phiên bản monitor trên máy chủ này chưa được tác giả chạy trên máy chủ Linux production, và các kênh ngoài
   Telegram được viết theo tài liệu của từng dịch vụ nhưng chưa gửi qua dịch vụ thật. Vì vậy skill cài đặt bắt
   Claude chạy `check` và `test` trên máy của bạn rồi cùng bạn đọc kết quả trước khi bật. Nếu một phép kiểm tra
   đọc sai hệ thống của bạn, hãy mở issue kèm output của `check`.
@@ -188,7 +232,9 @@ node --test tests/worker.test.mjs
 - Lịch sử, biểu đồ, trang trạng thái. Công cụ này báo vào chat, không lưu metric. Dùng kèm Beszel hoặc Netdata.
 - Cảnh báo từ analytics của Cloudflare (tỉ lệ 5xx, lỗi Worker, hạn mức).
 - Máy chủ Windows và macOS.
-- Tự hành động (khởi động lại dịch vụ, kill tiến trình). Nó chỉ báo; con người hoặc skill triage mới hành động.
+- Agent trên các kênh ngoài Telegram. Cảnh báo đi mọi kênh; agent thì sống trong nhóm Telegram.
+- Monitor tự hành động. `infrawatch.py` chỉ báo; hành động là việc của con người, hoặc của agent theo chính sách
+  của bạn.
 
 ## Giấy phép
 

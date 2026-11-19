@@ -6,7 +6,7 @@
     {
       "name": "infra-alerts",
       "source": "./",
-      "description": "Set up and run monitoring with chat alerts for VPSes, NVIDIA GPU machines and Cloudflare-hosted services: a one-file host agent, a Cloudflare Worker watcher, Telegram and other channels, alert triage."
+      "description": "Set up and run monitoring with chat alerts for VPSes, NVIDIA GPU machines and Cloudflare-hosted services: a one-file host agent, a Cloudflare Worker watcher, Telegram and other channels, alert triage, and agents in the alert chat."
     }
   ]
 }

@@ -10,9 +10,10 @@ PushPlus 以及任意 webhook。
 分析每条告警的原因。
 
 ```
-[infrawatch] 🔴 vps-01: 1 problem, 1 resolved
+[infrawatch] 🔴 URGENT | vps-01: 1 problem, 1 resolved
 🔴 disk /: 96% used, 1.8 GB free
 ✅ http api: HTTP 200 (after 12m)
+#urgent #vps_01
 ```
 
 它源自我们监控 [allshorts.net](https://allshorts.net) 的做法（几台服务器、一台 GPU 机器和 Cloudflare，全部推送到
@@ -27,6 +28,7 @@ PushPlus 以及任意 webhook。
 | [`monitor-hosts`](skills/monitor-hosts/SKILL.md) | 通过 SSH 在 Linux 服务器上安装 `infrawatch.py`：磁盘、内存、负载、systemd 服务、Docker 容器、HTTP/TCP 端点、证书到期、NVIDIA 显卡、重启、OOM，以及可选的安全基线 |
 | [`monitor-cloudflare`](skills/monitor-cloudflare/SKILL.md) | 部署一个 Cloudflare Worker（免费套餐即可）：每分钟从外部拨测你的 URL，并在某台主机停止发送心跳时告警 |
 | [`triage-alerts`](skills/triage-alerts/SKILL.md) | 收到告警后用只读命令定位原因、给出修复建议，并调整噪音告警 |
+| [`run-ops-agents`](skills/run-ops-agents/SKILL.md) | 把 agent 放进 Telegram 告警群：lead 盯着未恢复的事件并分派，agent 排查、按策略修复、用按钮请求审批、汇报，并响应 `@` |
 
 两个组件，可单独使用，配合更可靠：
 
@@ -64,6 +66,8 @@ npx skills add lovecastle/infra-alert-skills
 | 知道服务器或网站彻底宕机 | “部署 Cloudflare 上的监控：拨测 https://example.com，vps-01 没有心跳时告警” |
 | 分析一条告警 | “收到这条告警：`[infrawatch] 🔴 vps-01: memory: 97% used`，怎么回事？” |
 | 维护期间静默 | “把 vps-01 的告警静默一小时” |
+| 告警分级用中文，每级一个话题 | “告警分类用中文显示，紧急告警发到群里的‘紧急’话题” |
+| 群里的值班 agent | “在告警群里放一个 agent：严重告警 5 分钟没人处理就自动排查，可以重启服务，其他操作先问” |
 
 Claude 在修改服务器或在你的 Cloudflare 账号中创建资源之前都会先征得同意，并在启用监控前给你看一次试运行
 （`infrawatch.py check`）的结果。
@@ -89,6 +93,31 @@ Claude 在修改服务器或在你的 Cloudflare 账号中创建资源之前都�
 - **维护静默**：`silence 2h` 期间继续检测，结束时汇报仍未恢复的问题。
 - **每日报告兼作存活证明**：没收到日报，说明监控本身出了问题。
 - **互相监视**：主机向 Worker 发心跳，主机也检查 Worker 的 `/health`。
+- **每条消息都有分类**：🔴 紧急（`#urgent`）、🟠 关注（`#attention`）、🛡 安全（`#security`）、✅ 恢复（`#resolved`）、
+  📊 统计（`#stats`）。标题里的词在 `[labels]` 中自定义（默认英文）；`#` 标签固定，便于在群里筛选；Telegram 上每类
+  可以进自己的话题。[详情](skills/monitor-hosts/references/checks.md#categories)。
+
+
+## 群里的 Agent（可选）
+
+监控把消息推到群里；[`run-ops-agents`](skills/run-ops-agents/SKILL.md) 让群里始终有“人”在看。`opsagent.py` 运行一个或
+多个 agent，每个 agent 是告警群里的一个 Telegram 机器人：
+
+- **Lead agent 盯着所有未恢复的事件**（来自 Worker 的 `/incidents`）。严重事件会附两个按钮：*I take it*（我来处理）
+  和 *Start now*（立即开始）。
+- **等待时间内无人认领**（默认 5 分钟），负责该主机的 agent 开始处理：通过 SSH 用无界面模式的 Claude Code 排查，
+  遵循 `triage-alerts`。
+- **只自动执行你写明的策略允许的操作**（重启指定服务、清理日志）。其余操作先发方案（发现了什么、具体命令、
+  影响范围、如何回滚、如何验证），附 *Approve* / *Refuse* 按钮。30 分钟无人答复视为拒绝。
+- **处理完在群里汇报**：原因、做了什么、结果、遗留问题。若 15 分钟后事件仍未恢复，会大声交还给管理员。
+- **管理员直接在群里指挥和讨论**：`@agent <指令或问题>`，或回复它的消息。群里可以有多个 agent，各管一块；
+  lead 负责分派。命令：`/status`、`/pause`、`/resume`、`/stop`。
+
+安全不靠模型的判断：只有你列出的 Telegram 用户 id 说话才算数（在群里不等于有权限）；审批是由守护进程校验的按钮；
+agent 用一个 sudoers 列表很短的账号登录服务器；`/pause` 可随时叫停。授权前请先读
+[access.md](skills/run-ops-agents/references/access.md)。
+
+空闲时没有费用：只有在有事可做时才启动 Claude Code。目前 agent 只支持 Telegram 群。
 
 ## 会安装什么
 
@@ -109,12 +138,16 @@ Cloudflare 账号中：一个 Worker（`infra-alerts`）和一个 D1 数据库�
 
 ## 测试情况
 
-版本 0.1.0，如实说明：
+版本 0.2.0，如实说明：
 
-- `infrawatch.py`：44 个测试，在 Python 3.8 与 3.11 上运行；采集部分用 `df`、`/proc`、`systemctl`、`docker`、
+- `infrawatch.py`：46 个测试，在 Python 3.8 与 3.11 上运行；采集部分用 `df`、`/proc`、`systemctl`、`docker`、
   `nvidia-smi`、`ss`、`journalctl` 的真实输出样本测试，告警逻辑与命令行用本地模拟的 Telegram 做端到端测试。
-- Worker：14 个测试（Node，使用真实 SQL 引擎代替 D1），并在 Cloudflare 运行时（`wrangler dev`）中完整跑过
+- Worker：16 个测试（Node，使用真实 SQL 引擎代替 D1），并在 Cloudflare 运行时（`wrangler dev`）中完整跑过
   故障、恢复、心跳与各接口。
+- `opsagent.py`：19 个测试，其中一个用本地服务器模拟 Telegram 和 Worker、用替身程序代替 `claude -p`，完整跑通
+  守护进程（线程、长轮询、按钮、审批）。命令行参数已被真实的 Claude Code 2.1 接受；成功时的结构化输出格式依据其
+  文档，尚未在已登录环境中实测。**尚未在真实 Telegram 和真实事件上运行过。** 建议先把 `grace_minutes` 调大、
+  sudoers 列表保持很短，并观察它。
 - **尚未完成**：这一版探针还没有由作者在生产 Linux 主机上运行过；Telegram 以外的渠道按各自官方文档实现，
   但没有经过真实服务发送验证。所以安装技能要求 Claude 先在你的主机上运行 `check` 和 `test` 并与你一起确认输出。
   如果某项检查在你的系统上读数有误，欢迎提 issue 并附上 `check` 的输出。
@@ -122,7 +155,8 @@ Cloudflare 账号中：一个 Worker（`infra-alerts`）和一个 D1 数据库�
 ## 暂不包含
 
 历史数据、图表与状态页（可与 Beszel、哪吒监控等搭配使用）；Cloudflare 分析数据告警；Windows/macOS 主机；
-自动处置（重启服务、结束进程）。
+Telegram 以外渠道上的 agent；监控本身的自动处置（`infrawatch.py` 只负责告知，
+处置交给人或按策略行事的 agent）。
 
 ## 许可证
 

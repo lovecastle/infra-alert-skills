@@ -19,7 +19,8 @@ map of it.
    containers exist. After that, anything outside the baseline is told once. A deploy or a new key will ping it;
    that is the point, and one message is a fair price.
 4. **Tell, do not act.** The monitor reports and a person decides. An unexplained change is treated as an
-   incident: look, do not clean up, decide together what to rotate or isolate.
+   incident: look, do not clean up, decide together what to rotate or isolate. Agents that do act are a separate,
+   optional layer with their own account, a short list of what they may run, and a person's yes for the rest.
 5. **Something outside must be watching.** A host that is down, cut off or taken over cannot be trusted to report
    itself. Each host sends an authenticated heartbeat to a watcher that runs somewhere else, and silence becomes
    an alert.
@@ -64,7 +65,9 @@ map of it.
 10. **A report on a schedule is a heartbeat.** If the daily message did not come, the monitor is what broke.
 11. **Monitoring moves with what it watches.** A check for a service that has moved away alerts forever, and a
     permanent alert gets muted along with the real ones. Removing a check is part of moving a service.
-12. **Verify by watching it fire.** Every setup ends with a test message and a deliberately caused alert. A
+12. **Say what each message asks of the reader.** Urgent, attention, security, resolved, statistics: one category
+    a message, so people can mute the reports and keep the urgent loud.
+13. **Verify by watching it fire.** Every setup ends with a test message and a deliberately caused alert. A
     schedule is deployed when you have seen it run, not when the code is merged.
 
 One thing that cost us time: turning a Telegram group into a supergroup gives it a new chat id, and every send
@@ -82,6 +85,7 @@ We do not publish counts of alerts, thresholds or incident details.
 ## What these skills carry over
 
 The alerting rules, the security baseline that learns first and tells once, the outside watcher with heartbeats,
-and the secret handling are all in the skills as defaults. The analytics-based crawler watch and
+and the secret handling are all in the skills as defaults. Agents in the chat (`run-ops-agents`) are built on the
+same idea as the rest: what must hold is enforced outside the model. The analytics-based crawler watch and
 application-level error digests are not included: they depend on the application. The pattern is what is worth
 copying. What we learned from other projects is in [prior-art.md](prior-art.md).

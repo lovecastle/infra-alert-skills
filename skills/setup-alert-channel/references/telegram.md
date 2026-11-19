@@ -60,6 +60,11 @@ In a group with topics, each topic has a thread id. Post a message in the topic,
 number is the topic. Put it after `TG_THREAD_ID=`. A common layout: one topic per machine (each server's
 `notify.env` has its own `TG_THREAD_ID`), plus one for the Cloudflare Worker.
 
+Or one topic per category of message, which is what most teams end up wanting: "Urgent" with notifications on,
+"Resolved" and "Stats" muted. Set `TG_THREAD_URGENT`, `TG_THREAD_ATTENTION`, `TG_THREAD_SECURITY`,
+`TG_THREAD_RESOLVED`, `TG_THREAD_STATS` to the topic ids (any you leave out fall back to `TG_THREAD_ID`).
+Each person then mutes topics to taste in Telegram itself.
+
 ## 5. Limits worth knowing
 
 - A message is at most **4096 characters**; the monitors cut longer ones.
