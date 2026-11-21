@@ -506,7 +506,7 @@ class App:
             self.stop.wait(1)
 
 
-def main(argv=None):
+def main(cli=None):
     for stream in (sys.stdout, sys.stderr):
         try:
             stream.reconfigure(encoding="utf-8", errors="replace")
@@ -517,7 +517,7 @@ def main(argv=None):
     ap.add_argument("--config", default="/etc/opsagent/agents.ini")
     ap.add_argument("--state", default="/var/lib/opsagent/state.json")
     ap.add_argument("--version", action="version", version=VERSION)
-    args = ap.parse_args(argv)
+    args = ap.parse_args(cli)
     try:
         cfg, agents, secrets, found, env_file = load_config(args.config)
     except configparser.Error as e:

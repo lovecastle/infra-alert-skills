@@ -4,6 +4,7 @@ Telegram and the incidents feed are replaced by recorders; Claude by a function,
 stands in for `claude -p` so the command line and the parsing of its answer are really exercised.
 """
 import importlib.util
+import io
 import json
 import os
 import sys
@@ -97,6 +98,21 @@ class Config(Case):
         self.assertTrue(found and len(agents) >= 2 and sum(a["lead"] for a in agents.values()) == 1)
         for section, keys in oa.DEFAULTS.items():
             self.assertLessEqual(set(cfg[section]), set(keys), section)
+
+    def test_check_runs_from_the_command_line_and_says_what_is_missing(self):
+        os.mkdir(os.path.join(self.dir.name, "bare"))
+        path = os.path.join(self.dir.name, "bare", "agents.ini")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("[chat]\nchat_id = -1001\nadmins = 111\n[claude]\ncommand = no-such-claude\n[agent:lead]\nlead = true\n")  # no tokens, no feed: no network
+        out, old = io.StringIO(), sys.stdout
+        sys.stdout = out
+        try:
+            code = oa.main(["check", "--config", path])
+        finally:
+            sys.stdout = old
+        self.assertEqual(code, 1)
+        for part in ("[incidents] url is not set", "claude: not found", "Nothing was posted"):
+            self.assertIn(part, out.getvalue())
 
 
 class Incidents(Case):
